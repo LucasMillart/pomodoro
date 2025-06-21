@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { createSession, completeSession } from '../utils/sessionUtils'
 
 // Types pour le timer Pomodoro
 export type TimerMode = 'focus' | 'shortBreak'
@@ -16,6 +17,7 @@ interface PomodoroState {
   currentMode: TimerMode
   status: TimerStatus
   sessionsCompleted: number // sessions focus complétées
+  currentSessionId: string | null // ID de la session en cours dans Supabase
   
   // Configuration
   settings: PomodoroSettings
@@ -50,6 +52,7 @@ export const usePomodoroStore = create<PomodoroState>()(
       currentMode: 'focus',
       status: 'idle',
       sessionsCompleted: 0,
+      currentSessionId: null,
       settings: defaultSettings,
       intervalId: null,
 
@@ -194,13 +197,22 @@ export const usePomodoroStore = create<PomodoroState>()(
         if (intervalId) {
           clearInterval(intervalId)
         }
-        
-        let nextMode: TimerMode
+          let nextMode: TimerMode
         let newSessionsCompleted = sessionsCompleted
         
         if (currentMode === 'focus') {
           // Fin d'une session de focus
           newSessionsCompleted = sessionsCompleted + 1
+          
+          // Compléter la session dans Supabase si c'est une session focus
+          const { currentSessionId } = get()
+          if (currentSessionId) {
+            // Calculer la durée effective (en secondes)
+            const actualDuration = settings.focusDuration * 60
+            
+            completeSession(currentSessionId, actualDuration)
+              .catch(err => console.error('Error completing session:', err))
+          }
           
           // Aller en pause courte après une session focus
           nextMode = 'shortBreak'
@@ -213,6 +225,14 @@ export const usePomodoroStore = create<PomodoroState>()(
         const duration = nextMode === 'focus' 
           ? settings.focusDuration
           : settings.shortBreakDuration
+          // Créer une nouvelle session dans Supabase
+        createSession(nextMode).then(session => {
+          if (session) {
+            set({
+              currentSessionId: session.id
+            })
+          }
+        })
         
         set({
           currentMode: nextMode,
